@@ -163,6 +163,15 @@ function withDnsRecords<T extends Domain>(
   };
 }
 
+function isCustomTrackingProvisioningComplete(domain: Domain): boolean {
+  return !!(
+    domain.trackingConfigGeneral &&
+    domain.trackingConfigClick &&
+    domain.trackingConfigOpen &&
+    domain.trackingConfigFull
+  );
+}
+
 function shouldPollCustomTrackingVerification(domain: Domain): boolean {
   if (env.NEXT_PUBLIC_IS_CLOUD) {
     return false;
@@ -170,11 +179,11 @@ function shouldPollCustomTrackingVerification(domain: Domain): boolean {
   if (!domain.customTrackingHostname || !domain.customTrackingPublicKey) {
     return false;
   }
-  if (domain.customTrackingStatus === DomainStatus.SUCCESS) {
-    return false;
-  }
   if (domain.customTrackingStatus === DomainStatus.FAILED) {
     return false;
+  }
+  if (domain.customTrackingStatus === DomainStatus.SUCCESS) {
+    return !isCustomTrackingProvisioningComplete(domain);
   }
   return true;
 }
@@ -493,7 +502,8 @@ export async function setCustomTrackingHostname(
       trackingConfigClick: null,
       trackingConfigOpen: null,
       trackingConfigFull: null,
-      trackingHttpsRequired: trackingHttpsRequired ?? false,
+      trackingHttpsRequired:
+        trackingHttpsRequired ?? domain.trackingHttpsRequired ?? false,
     },
   });
 
