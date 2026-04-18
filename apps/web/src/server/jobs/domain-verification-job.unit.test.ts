@@ -74,6 +74,7 @@ function createDomain(id: number, status: DomainStatus): Domain {
     dmarcAdded: false,
     errorMessage: null,
     subdomain: null,
+    mailFromLabel: null,
     sesTenantId: null,
     isVerifying: status !== DomainStatus.SUCCESS,
     customTrackingHostname: null,

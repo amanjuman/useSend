@@ -7,6 +7,7 @@ const {
   mockAddTrackingEmailIdentity,
   mockDeleteConfigurationSet,
   mockDeleteDomain,
+  mockPutEmailIdentityMailFromDomain,
   mockWebhookEmit,
   mockRedis,
   mockSendMail,
@@ -27,6 +28,7 @@ const {
   mockAddTrackingEmailIdentity: vi.fn(),
   mockDeleteConfigurationSet: vi.fn(),
   mockDeleteDomain: vi.fn(),
+  mockPutEmailIdentityMailFromDomain: vi.fn(),
   mockWebhookEmit: vi.fn(),
   mockRedis: {
     mget: vi.fn(),
@@ -59,6 +61,7 @@ vi.mock("~/server/aws/ses", () => ({
   addTrackingEmailIdentity: mockAddTrackingEmailIdentity,
   deleteConfigurationSet: mockDeleteConfigurationSet,
   deleteDomain: mockDeleteDomain,
+  putEmailIdentityMailFromDomain: mockPutEmailIdentityMailFromDomain,
 }));
 
 vi.mock("~/server/service/webhook-service", () => ({
@@ -93,6 +96,7 @@ import {
   isDomainVerificationDue,
   refreshDomainVerification,
   setCustomTrackingHostname,
+  setMailFromLabel,
 } from "~/server/service/domain-service";
 
 function createDomain(overrides: Partial<Domain> = {}): Domain {
@@ -111,6 +115,7 @@ function createDomain(overrides: Partial<Domain> = {}): Domain {
     dmarcAdded: false,
     errorMessage: null,
     subdomain: null,
+    mailFromLabel: null,
     sesTenantId: null,
     isVerifying: true,
     customTrackingHostname: null,
@@ -140,6 +145,7 @@ describe("domain-service", () => {
     mockAddTrackingEmailIdentity.mockReset();
     mockDeleteConfigurationSet.mockReset();
     mockDeleteDomain.mockReset();
+    mockPutEmailIdentityMailFromDomain.mockReset();
     mockDb.teamUser.findMany.mockReset();
     mockGetDomainIdentity.mockReset();
     mockWebhookEmit.mockReset();
@@ -527,5 +533,41 @@ describe("domain-service", () => {
         }),
       }),
     );
+  });
+
+  it("marks MAIL FROM verification pending when the label changes", async () => {
+    const existing = createDomain({
+      status: DomainStatus.SUCCESS,
+      spfDetails: DomainStatus.SUCCESS,
+      isVerifying: false,
+      mailFromLabel: null,
+    });
+    mockDb.domain.findFirst.mockResolvedValue(existing);
+    mockPutEmailIdentityMailFromDomain.mockResolvedValue(undefined);
+    mockDb.domain.update.mockImplementation(async ({ data }) =>
+      createDomain({ ...existing, ...data }),
+    );
+
+    const result = await setMailFromLabel(42, 7, "bounce");
+
+    expect(mockPutEmailIdentityMailFromDomain).toHaveBeenCalledWith(
+      "example.com",
+      "us-east-1",
+      "bounce.example.com",
+    );
+    expect(mockDb.domain.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 42 },
+        data: expect.objectContaining({
+          mailFromLabel: "bounce",
+          spfDetails: DomainStatus.PENDING,
+          isVerifying: true,
+          errorMessage: null,
+        }),
+      }),
+    );
+    expect(result.spfDetails).toBe(DomainStatus.PENDING);
+    expect(result.aggregateStatus).toBe(DomainStatus.PENDING);
+    expect(result.dnsRecords[0]?.status).toBe(DomainStatus.PENDING);
   });
 });
