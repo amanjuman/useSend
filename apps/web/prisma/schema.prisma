@@ -197,7 +197,7 @@ model Domain {
   sesTenantId   String?
   isVerifying   Boolean      @default(false)
   /// Self-hosted: custom hostname for SES click/open tracking (e.g. track.example.com). Requires DNS + verification in SES.
-  customTrackingHostname     String?
+  customTrackingHostname     String?      @unique
   customTrackingPublicKey    String?
   customTrackingDkimSelector String?      @default("utrack")
   customTrackingDkimStatus   String?

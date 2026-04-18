@@ -217,7 +217,12 @@ export async function putConfigurationSetHttpsTracking(
     HttpsPolicy: httpsPolicy,
   });
   const response = await sesClient.send(cmd);
-  return response.$metadata.httpStatusCode === 200;
+  const code = response.$metadata.httpStatusCode;
+  if (code !== 200) {
+    throw new Error(
+      `PutConfigurationSetTrackingOptions failed for ${configurationSetName}: HTTP ${code ?? "unknown"}`,
+    );
+  }
 }
 
 export async function deleteConfigurationSet(
@@ -379,6 +384,10 @@ export async function getAccount(region: string) {
   return response;
 }
 
+function isAlreadyExistsError(error: unknown): boolean {
+  return (error as { name?: string })?.name === "AlreadyExistsException";
+}
+
 export async function addWebhookConfiguration(
   configName: string,
   topicArn: string,
@@ -391,10 +400,19 @@ export async function addWebhookConfiguration(
     ConfigurationSetName: configName,
   });
 
-  const configSetResponse = await sesClient.send(configSetCommand);
-
-  if (configSetResponse.$metadata.httpStatusCode !== 200) {
-    throw new Error("Failed to create configuration set");
+  try {
+    const configSetResponse = await sesClient.send(configSetCommand);
+    if (configSetResponse.$metadata.httpStatusCode !== 200) {
+      throw new Error("Failed to create configuration set");
+    }
+  } catch (error: unknown) {
+    if (!isAlreadyExistsError(error)) {
+      throw error;
+    }
+    logger.debug(
+      { configName, region },
+      "SES configuration set already exists; continuing",
+    );
   }
 
   const command = new CreateConfigurationSetEventDestinationCommand({
@@ -409,8 +427,22 @@ export async function addWebhookConfiguration(
     },
   });
 
-  const response = await sesClient.send(command);
-  return response.$metadata.httpStatusCode === 200;
+  try {
+    const response = await sesClient.send(command);
+    if (response.$metadata.httpStatusCode !== 200) {
+      throw new Error("Failed to create configuration set event destination");
+    }
+  } catch (error: unknown) {
+    if (!isAlreadyExistsError(error)) {
+      throw error;
+    }
+    logger.debug(
+      { configName, region },
+      "SES event destination already exists; continuing",
+    );
+  }
+
+  return true;
 }
 
 /**

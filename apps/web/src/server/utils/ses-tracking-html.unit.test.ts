@@ -22,4 +22,11 @@ describe("addSesNoTrackToUnsubscribeLinks", () => {
     const html = '<a href="https://example.com/">Home</a>';
     expect(addSesNoTrackToUnsubscribeLinks(html)).toBe(html);
   });
+
+  it("handles mixed-case unsubscribe in href", () => {
+    const html =
+      '<a href="https://app.example.com/api/Unsubscribe?id=1">x</a>';
+    const out = addSesNoTrackToUnsubscribeLinks(html);
+    expect(out).toContain("ses:no-track");
+  });
 });

@@ -5,7 +5,7 @@
  * @see https://docs.aws.amazon.com/ses/latest/dg/faqs-metrics.html
  */
 export function addSesNoTrackToUnsubscribeLinks(html: string): string {
-  if (!html.includes("unsubscribe")) {
+  if (!/unsubscribe/i.test(html)) {
     return html;
   }
 

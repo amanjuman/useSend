@@ -70,6 +70,13 @@ vi.mock("~/server/email-templates", () => ({
   renderDomainVerificationStatusEmail: mockRenderDomainVerificationStatusEmail,
 }));
 
+vi.mock("~/env", () => ({
+  env: {
+    NEXT_PUBLIC_IS_CLOUD: false,
+    NEXTAUTH_URL: "http://localhost:3000",
+  },
+}));
+
 import {
   DOMAIN_UNVERIFIED_RECHECK_MS,
   DOMAIN_VERIFIED_RECHECK_MS,
@@ -420,5 +427,33 @@ describe("domain-service", () => {
     ]);
 
     await expect(isDomainVerificationDue(domain)).resolves.toBe(false);
+  });
+
+  it("uses unverified cadence when custom tracking is still pending even if the sending domain is verified", async () => {
+    const domain = createDomain({
+      status: DomainStatus.SUCCESS,
+      customTrackingHostname: "track.example.com",
+      customTrackingPublicKey: "pk",
+      customTrackingStatus: DomainStatus.PENDING,
+    });
+    mockRedis.mget.mockResolvedValue([
+      new Date(
+        Date.now() - DOMAIN_UNVERIFIED_RECHECK_MS + 5 * 60 * 1000,
+      ).toISOString(),
+      DomainStatus.SUCCESS,
+      "1",
+    ]);
+
+    await expect(isDomainVerificationDue(domain)).resolves.toBe(false);
+
+    mockRedis.mget.mockResolvedValue([
+      new Date(
+        Date.now() - DOMAIN_UNVERIFIED_RECHECK_MS - 5 * 60 * 1000,
+      ).toISOString(),
+      DomainStatus.SUCCESS,
+      "1",
+    ]);
+
+    await expect(isDomainVerificationDue(domain)).resolves.toBe(true);
   });
 });

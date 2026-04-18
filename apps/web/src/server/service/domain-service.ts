@@ -435,6 +435,15 @@ export async function setCustomTrackingHostname(
 
   assertTrackingHostnameAllowed(domain.name, normalized);
 
+  const parsedHost = tldts.parse(normalized);
+  if (!parsedHost.subdomain) {
+    throw new UnsendApiError({
+      code: "BAD_REQUEST",
+      message:
+        "Tracking hostname must be a subdomain (for example track.example.com), not the zone apex.",
+    });
+  }
+
   if (
     domain.customTrackingHostname === normalized &&
     domain.customTrackingPublicKey
@@ -443,27 +452,26 @@ export async function setCustomTrackingHostname(
       trackingHttpsRequired !== undefined &&
       trackingHttpsRequired !== domain.trackingHttpsRequired
     ) {
+      const domainForSes: Domain = {
+        ...domain,
+        trackingHttpsRequired,
+      };
+      await reapplyCustomTrackingSesPolicy(domainForSes);
       const updated = await db.domain.update({
         where: { id: domainId },
         data: { trackingHttpsRequired },
       });
-      try {
-        await reapplyCustomTrackingSesPolicy(updated);
-      } catch (error) {
-        logger.error(
-          { err: error, domainId },
-          "[DomainService]: Failed to reapply custom tracking HTTPS policy",
-        );
-      }
       await emitDomainEvent(updated, "domain.updated");
       return updated;
     }
     return domain;
   }
 
-  if (domain.customTrackingHostname) {
-    await removeCustomTrackingResources(domain);
-  }
+  const previousForCleanup =
+    domain.customTrackingHostname &&
+    domain.customTrackingHostname !== normalized
+      ? domain
+      : null;
 
   const selector = domain.customTrackingDkimSelector ?? "utrack";
   const publicKey = await ses.addTrackingEmailIdentity(
@@ -488,6 +496,10 @@ export async function setCustomTrackingHostname(
       trackingHttpsRequired: trackingHttpsRequired ?? false,
     },
   });
+
+  if (previousForCleanup) {
+    await removeCustomTrackingResources(previousForCleanup);
+  }
 
   await emitDomainEvent(updated, "domain.updated");
   return updated;
@@ -1132,6 +1144,15 @@ export async function isDomainVerificationDue(domain: Domain) {
     !domain.isVerifying
   ) {
     return false;
+  }
+
+  if (shouldPollCustomTrackingVerification(domain)) {
+    const now = Date.now();
+    const lastCheckedAt = verificationState.lastCheckedAt?.getTime() ?? 0;
+    if (!verificationState.lastCheckedAt) {
+      return true;
+    }
+    return now - lastCheckedAt >= DOMAIN_UNVERIFIED_RECHECK_MS;
   }
 
   const now = Date.now();
