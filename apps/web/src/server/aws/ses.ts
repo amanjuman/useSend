@@ -7,6 +7,8 @@ import {
   SendEmailCommand,
   CreateConfigurationSetEventDestinationCommand,
   CreateConfigurationSetCommand,
+  DeleteConfigurationSetCommand,
+  PutConfigurationSetTrackingOptionsCommand,
   EventType,
   GetAccountCommand,
   CreateTenantResourceAssociationCommand,
@@ -20,6 +22,7 @@ import { env } from "~/env";
 import { EmailContent } from "~/types";
 import { logger } from "../logger/log";
 import { buildHeaders } from "~/server/utils/email-headers";
+import { addSesNoTrackToUnsubscribeLinks } from "~/server/utils/ses-tracking-html";
 
 let accountId: string | undefined = undefined;
 
@@ -142,6 +145,102 @@ export async function addDomain(
   return publicKey;
 }
 
+/**
+ * DKIM-only identity for a custom click/open tracking hostname (no custom MAIL FROM).
+ * Used for self-hosted per-domain SES tracking domains.
+ */
+export async function addTrackingEmailIdentity(
+  hostname: string,
+  region: string,
+  sesTenantId?: string,
+  dkimSelector: string = "utrack",
+) {
+  const sesClient = getSesClient(region);
+
+  const { privateKey, publicKey } = generateKeyPair();
+  const command = new CreateEmailIdentityCommand({
+    EmailIdentity: hostname,
+    DkimSigningAttributes: {
+      DomainSigningSelector: dkimSelector,
+      DomainSigningPrivateKey: privateKey,
+    },
+  });
+  const response = await sesClient.send(command);
+
+  if (sesTenantId) {
+    const tenantResourceAssociationCommand =
+      new CreateTenantResourceAssociationCommand({
+        TenantName: sesTenantId,
+        ResourceArn: await getIdentityArn(hostname, region),
+      });
+
+    const tenantResourceAssociationResponse = await sesClient.send(
+      tenantResourceAssociationCommand,
+    );
+
+    if (tenantResourceAssociationResponse.$metadata.httpStatusCode !== 200) {
+      logger.error(
+        { tenantResourceAssociationResponse },
+        "Failed to associate tracking identity with tenant",
+      );
+      throw new Error("Failed to associate tracking identity with tenant");
+    }
+  }
+
+  if (response.$metadata.httpStatusCode !== 200) {
+    logger.error({ response }, "Failed to create tracking email identity");
+    throw new Error("Failed to create tracking email identity");
+  }
+
+  return publicKey;
+}
+
+/** Values supported for PutConfigurationSetTrackingOptions / HttpsPolicy in our app. */
+export type SesTrackingHttpsPolicy = "OPTIONAL" | "REQUIRE";
+
+export function trackingHttpsRequiredToSesPolicy(
+  trackingHttpsRequired: boolean,
+): SesTrackingHttpsPolicy {
+  return trackingHttpsRequired ? "REQUIRE" : "OPTIONAL";
+}
+
+export async function putConfigurationSetHttpsTracking(
+  configurationSetName: string,
+  customRedirectDomain: string,
+  region: string,
+  httpsPolicy: SesTrackingHttpsPolicy,
+) {
+  const sesClient = getSesClient(region);
+  const cmd = new PutConfigurationSetTrackingOptionsCommand({
+    ConfigurationSetName: configurationSetName,
+    CustomRedirectDomain: customRedirectDomain,
+    HttpsPolicy: httpsPolicy,
+  });
+  const response = await sesClient.send(cmd);
+  return response.$metadata.httpStatusCode === 200;
+}
+
+export async function deleteConfigurationSet(
+  configurationSetName: string,
+  region: string,
+) {
+  const sesClient = getSesClient(region);
+  try {
+    const response = await sesClient.send(
+      new DeleteConfigurationSetCommand({
+        ConfigurationSetName: configurationSetName,
+      }),
+    );
+    return response.$metadata.httpStatusCode === 200;
+  } catch (error: unknown) {
+    const err = error as { name?: string };
+    if (err.name === "NotFoundException") {
+      return true;
+    }
+    throw error;
+  }
+}
+
 export async function deleteDomain(
   domain: string,
   region: string,
@@ -218,13 +317,15 @@ export async function sendRawEmail({
 }) {
   const sesClient = getSesClient(region);
 
+  const htmlForSes = html ? addSesNoTrackToUnsubscribeLinks(html) : html;
+
   const { message: messageStream } = await nodemailer
     .createTransport({ streamTransport: true })
     .sendMail({
       from,
       to,
       subject,
-      html,
+      html: htmlForSes,
       attachments: attachments?.map((attachment) => ({
         filename: attachment.filename,
         content: attachment.content,

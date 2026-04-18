@@ -32,6 +32,27 @@ import { randomUUID } from "crypto";
 import { SuppressionService } from "./suppression-service";
 import { WebhookService } from "./webhook-service";
 
+/** Destination URLs for opt-out should not increment campaign click/open-style engagement. */
+function isUnsubscribeEngagementExemptLink(link: string | undefined): boolean {
+  if (!link) {
+    return false;
+  }
+  try {
+    const base = new URL(env.NEXTAUTH_URL);
+    const u = new URL(link);
+    if (u.origin !== base.origin) {
+      return false;
+    }
+    return /\bunsubscribe\b/i.test(`${u.pathname}${u.search}`);
+  } catch {
+    const prefix = env.NEXTAUTH_URL.replace(/\/$/, "");
+    return (
+      link.startsWith(`${prefix}/unsubscribe`) ||
+      /\/api\/unsubscribe/i.test(link)
+    );
+  }
+}
+
 export async function parseSesHook(data: SesEvent) {
   const mailStatus = getEmailStatus(data);
 
@@ -264,7 +285,7 @@ export async function parseSesHook(data: SesEvent) {
   if (email.campaignId) {
     if (
       mailStatus !== "CLICKED" ||
-      !(mailData as SesClick).link.startsWith(`${env.NEXTAUTH_URL}/unsubscribe`)
+      !isUnsubscribeEngagementExemptLink((mailData as SesClick).link)
     ) {
       await checkUnsubscribe({
         contactId: email.contactId!,
