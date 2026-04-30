@@ -1,9 +1,9 @@
 import { env } from "~/env";
 import { db } from "~/server/db";
 import { logger } from "~/server/logger/log";
-import { parseSesHook, SesHookParser } from "~/server/service/ses-hook-parser";
+import { SesHookParser } from "~/server/service/ses-hook-parser";
 import { SesSettingsService } from "~/server/service/ses-settings-service";
-import { SnsNotificationMessage } from "~/types/aws-types";
+import { SesEvent, SnsNotificationMessage } from "~/types/aws-types";
 
 export const dynamic = "force-dynamic";
 
@@ -46,10 +46,10 @@ export async function POST(req: Request) {
       return Response.json({ data: "Ignored non-SES callback message" });
     }
 
-    if (!message || typeof message !== "object") {
+    if (!isSesEventPayload(message)) {
       logger.info(
         { messageId: data?.MessageId },
-        "Ignoring SNS notification with invalid payload shape",
+        "Ignoring SNS notification that is not an SES event payload",
       );
       return Response.json({ data: "Ignored non-SES callback message" });
     }
@@ -67,6 +67,14 @@ export async function POST(req: Request) {
     logger.error({ err: e, messageId: data?.MessageId }, "Failed to process SES callback");
     return Response.json({ data: "Error is parsing hook" });
   }
+}
+
+function isSesEventPayload(value: unknown): value is SesEvent {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const event = value as Partial<SesEvent>;
+  return typeof event.eventType === "string" && !!event.mail;
 }
 
 /**
